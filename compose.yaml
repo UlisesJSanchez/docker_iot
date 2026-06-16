@@ -101,6 +101,8 @@ services:
     restart: unless-stopped
   telegrambot:
     image: telegrambot
+    build:
+      context: ./telegrambot
     container_name: telegrambot
     environment:
       - TZ=America/Argentina/Buenos_Aires 
@@ -109,6 +111,11 @@ services:
       - MARIADB_USER=${MARIADB_USER}
       - MARIADB_USER_PASS=${MARIADB_USER_PASS}
       - MARIADB_DB=${MARIADB_DB}
+      - SERVIDOR=${SERVIDOR}
+      - MQTT_USR=${MQTT_USR}
+      - MQTT_PASS=${MQTT_PASS}
+      - PUERTO_MQTTS=${PUERTO_MQTTS}
+      - MAC_ID=${MAC_ID}
     restart: unless-stopped
     depends_on:
       - mariadb
