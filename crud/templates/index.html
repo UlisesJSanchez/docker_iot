@@ -1,36 +1,50 @@
-{% extends "layout.html" %}
+{% extends 'layout.html' %}
+
 {% block body %}
+<div class="row justify-content-center">
+  <div class="col-md-6 col-lg-5">
+    
+    <div class="card border-primary mb-3">
+      
+      <div class="card-body">
+        <h4 class="card-title">Panel de Control</h4>
+        
+        <form action="{{ url_for('enviar_mqtt') }}" method="POST">
+          
+          <div class="mb-4 mt-3">
+            <label for="nodo" class="form-label fw-bold">Seleccionar nodo destinatario:</label>
+            <select class="form-select border-primary" id="nodo" name="nodo" required>
+              <option value="" disabled {% if not ultimo_nodo %}selected{% endif %}>Dispositivos...</option>
+              {% for nodo in nodos %}
+                <option value="{{ nodo.id }}" {% if nodo.id == ultimo_nodo %}selected{% endif %}>
+                  {{ nodo.nombre }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
 
-<form action="{{url_for('add_contact')}}" method="POST">
-  <input type="text" name="nombre" placeholder="Nombre completo">
-  <input type="tel" name="tel" placeholder="teléfono">
-  <input type="email" name="email" placeholder="Email">
-  <button>guardar</button>
-</form>
+          <hr class="text-primary my-4">
 
-<table>
-  <thead>
-    <tr>
-      <td>ID</td>
-      <td>Nombre completo</td>
-      <td>Teléfono</td>
-      <td>Email</td>
-      <td>acción</td>
-    </tr>
-  </thead>
-  <tbody>
-    {% for contacto in contactos %}
-    <tr>
-      <td>{{contacto.0}}</td>
-      <td>{{contacto.1}}</td>
-      <td>{{contacto.2}}</td>
-      <td>{{contacto.3}}</td>
-      <td>
-        <a href="{{url_for('conseguir_contacto',id=contacto.0)}}">editar</a>
-        <a href="{{url_for('borrar_contacto',id=contacto.0)}}">borrar</a>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+          <div class="mb-4">
+            <label class="form-label fw-bold">Lanzar destello:</label>
+            <div class="d-grid gap-2">
+              <button class="btn btn-lg btn-warning" type="submit" name="comando" value="destello">Destello</button>
+            </div>
+          </div>
+
+          <hr class="text-primary my-4">
+
+          <div class="mb-2">
+            <label for="setpoint_val" class="form-label fw-bold">Ajustar setpoint:</label>
+            <div class="input-group mb-3">
+              <input type="number" step="0.1" class="form-control" id="setpoint_val" name="setpoint_val" placeholder="Ej: 25" aria-label="Valor del Setpoint">
+              <button class="btn btn-success" type="submit" name="comando" value="setpoint" id="button-addon2">Actualizar</button>
+            </div>
+          </div>
+
+        </form>
+        </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

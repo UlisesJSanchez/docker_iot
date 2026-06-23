@@ -4,6 +4,7 @@ import os, logging
 from functools import wraps
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
+import ssl, aiomqtt, asyncio
 
 logging.basicConfig(format='%(asctime)s - CRUD - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -18,17 +19,21 @@ app.config["MYSQL_USER"] = os.environ["MYSQL_USER"]
 app.config["MYSQL_PASSWORD"] = os.environ["MYSQL_PASSWORD"]
 app.config["MYSQL_DB"] = os.environ["MYSQL_DB"]
 app.config["MYSQL_HOST"] = os.environ["MYSQL_HOST"]
-app.config['PERMANENT_SESSION_LIFETIME']=600
+app.config['PERMANENT_SESSION_LIFETIME'] = 600
 mysql = MySQL(app)
 
-# rutas
+app.config["SERVIDOR"] = os.environ.get("SERVIDOR")
+app.config["PUERTO_MQTTS"] = int(os.environ.get("PUERTO_MQTTS"))
+app.config["MQTT_USR"] = os.environ.get("MQTT_USR")
+app.config["MQTT_PASS"] = os.environ.get("MQTT_PASS")
+app.config["MAC_ID"] = os.environ.get("MAC_ID")
 
 def require_login(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if session.get("user_id") is None:
             return redirect(url_for('login'))
-        g.usuario=session.get("user_id")
+        g.usuario = session.get("user_id")
         return f(*args, **kwargs)
     return decorated_function
 
@@ -36,21 +41,17 @@ def require_login(f):
 def registrar():
     """Registrar usuario"""
     if request.method == "POST":
-
-        # Ensure username was submitted
         if not request.form.get("usuario"):
             return "el campo usuario es oblicatorio"
-
-        # Ensure password was submitted
         elif not request.form.get("password"):
             return "el campo contraseña es oblicatorio"
 
-        passhash=generate_password_hash(request.form.get("password"), method='scrypt', salt_length=16)
+        passhash = generate_password_hash(request.form.get("password"), method='scrypt', salt_length=16)
         logging.info(passhash)
         cur = mysql.connection.cursor()
         cur.execute("INSERT INTO usuarios (usuario, hash) VALUES (%s,%s)", (request.form.get("usuario"), passhash[17:]))
         if mysql.connection.affected_rows():
-            flash('Se agregó un usuario')  # usa sesión
+            flash('Se agregó un usuario')
             logging.info("se agregó un usuario")
         mysql.connection.commit()
         return redirect(url_for('index'))
@@ -61,31 +62,27 @@ def registrar():
 @require_login
 def toggle_tema():
     tema_actual = session.get('tema', 'claro')
-    
     if tema_actual == 'claro':
         session['tema'] = 'oscuro'
     else:
         session['tema'] = 'claro'
-        
     return redirect(request.referrer or url_for('index'))
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        # Ensure username was submitted
         if not request.form.get("usuario"):
             return "el campo usuario es oblicatorio"
-        # Ensure password was submitted
         elif not request.form.get("password"):
             return "el campo contraseña es oblicatorio"
 
         cur = mysql.connection.cursor()
         cur.execute("SELECT * FROM usuarios WHERE usuario LIKE %s", (request.form.get("usuario"),))
-        rows=cur.fetchone()
-        if(rows):
-            if (check_password_hash('scrypt:32768:8:1$' + rows[2],request.form.get("password"))):
+        rows = cur.fetchone()
+        if rows:
+            if check_password_hash('scrypt:32768:8:1$' + rows[2], request.form.get("password")):
                 session.permanent = True
-                session["user_id"]=request.form.get("usuario")
+                session["user_id"] = request.form.get("usuario")
                 logging.info("se autenticó correctamente")
                 return redirect(url_for('index'))
             else:
@@ -96,11 +93,15 @@ def login():
 @app.route('/')
 @require_login
 def index():
-    cur = mysql.connection.cursor()
-    cur.execute('SELECT * FROM contactos')
-    datos = cur.fetchall()
-    cur.close()
-    return render_template('index.html', contactos = datos)
+    nodos = [
+        {"id": app.config["MAC_ID"], "nombre": "Principal"},
+        {"id": "Raspi2", "nombre": "Raspi 2"},
+        {"id": "Raspi3", "nombre": "Raspi 3"}
+    ]
+
+    ultimo_nodo = session.get('ultimo_nodo', '')
+    
+    return render_template('index.html', nodos=nodos, ultimo_nodo=ultimo_nodo)
 
 @app.route('/add_contact', methods=['POST'])
 @require_login
@@ -109,10 +110,9 @@ def add_contact():
     tel = request.form['tel']
     email = request.form['email']
     cur = mysql.connection.cursor()
-    cur.execute("INSERT INTO contactos (nombre, tel, email) VALUES (%s,%s,%s)"
-                , (nombre, tel, email))
+    cur.execute("INSERT INTO contactos (nombre, tel, email) VALUES (%s,%s,%s)", (nombre, tel, email))
     if mysql.connection.affected_rows():
-        flash('Se agregó un contacto')  # usa sesión
+        flash('Se agregó un contacto')
         logging.info("se agregó un contacto")
         mysql.connection.commit()
     return redirect(url_for('index'))
@@ -123,7 +123,7 @@ def borrar_contacto(id):
     cur = mysql.connection.cursor()
     cur.execute('DELETE FROM contactos WHERE id = %s', (id,))
     if mysql.connection.affected_rows():
-        flash('Se eliminó un contacto')  # usa sesión
+        flash('Se eliminó un contacto')
         logging.info("se eliminó un contacto")
         mysql.connection.commit()
     return redirect(url_for('index'))
@@ -146,7 +146,7 @@ def actualizar_contacto(id):
     cur = mysql.connection.cursor()
     cur.execute("UPDATE contactos SET nombre=%s, tel=%s, email=%s WHERE id=%s", (nombre, tel, email, id))
     if mysql.connection.affected_rows():
-        flash('Se actualizó un contacto')  # usa sesión
+        flash('Se actualizó un contacto')
         logging.info("se actualizó un contacto")
         mysql.connection.commit()
     return redirect(url_for('index'))
@@ -156,4 +156,52 @@ def actualizar_contacto(id):
 def logout():
     session.clear()
     logging.info("el usuario {} cerró su sesión".format(g.usuario))
+    return redirect(url_for('index'))
+
+@app.route('/enviar_mqtt', methods=['POST'])
+@require_login
+def enviar_mqtt():
+    comando = request.form.get('comando') 
+    mac_destino = request.form.get('nodo') 
+
+    if not mac_destino:
+        flash('Debe seleccionar un nodo destinatario de la lista.', 'warning')
+        return redirect(url_for('index'))
+    
+    session['ultimo_nodo'] = mac_destino
+
+    if comando == 'destello':
+        topic = f"{mac_destino}/destello"
+        payload = "destello"
+    elif comando == 'setpoint':
+        topic = f"{mac_destino}/setpoint"
+        payload = request.form.get('setpoint_val', '')
+        if not payload:
+            flash('Debe ingresar un valor de setpoint válido.', 'danger')
+            return redirect(url_for('index'))
+
+    tls_context = ssl.create_default_context()
+    username = app.config["MQTT_USR"] if app.config["MQTT_USR"] else None
+    password = app.config["MQTT_PASS"] if app.config["MQTT_PASS"] else None
+
+    async def publicar_mensaje():
+        async with aiomqtt.Client(
+            hostname=app.config["SERVIDOR"],
+            port=app.config["PUERTO_MQTTS"],
+            username=username,
+            password=password,
+            tls_context=tls_context,
+            timeout=5.0
+        ) as client:
+            await client.publish(topic, payload=payload, qos=1)
+
+    try:
+        asyncio.run(publicar_mensaje())
+        flash(f'Publicación exitosa en el tópico "{topic}"', 'success')
+        logging.info(f"Publicación exitosa en: {topic} | mensaje: {payload}")
+
+    except Exception as e:
+        flash(f'Error al publicar: {str(e)}', 'danger')
+        logging.error(f"Error: {str(e)}")
+
     return redirect(url_for('index'))
