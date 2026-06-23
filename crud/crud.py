@@ -57,6 +57,18 @@ def registrar():
 
     return render_template('registrar.html')
 
+@app.route('/toggle_tema')
+@require_login
+def toggle_tema():
+    tema_actual = session.get('tema', 'claro')
+    
+    if tema_actual == 'claro':
+        session['tema'] = 'oscuro'
+    else:
+        session['tema'] = 'claro'
+        
+    return redirect(request.referrer or url_for('index'))
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
